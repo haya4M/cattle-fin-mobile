@@ -1,0 +1,19 @@
+# DBファイルを除外
+*.db
+*.sqlite
+
+# Pythonキャッシュ
+__pycache__/
+*.pyc
+
+# 仮想環境
+.venv/
+venv/
+env/
+
+# IDE設定
+.vscode/
+.idea/
+
+# macOS用
+.DS_Store
