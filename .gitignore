@@ -1,5 +1,5 @@
 # DBファイルを除外
-*.db
+#*.db
 *.sqlite
 
 # Pythonキャッシュ
