@@ -5,7 +5,6 @@ from datetime import date
 import plotly.express as px
 import plotly.graph_objects as go
 import matplotlib
-import matplotlib.font_manager as fm
 
 # ======================================
 # 日本語フォント設定
@@ -57,6 +56,16 @@ def load_data(conn):
     return pd.read_sql("SELECT * FROM finance ORDER BY date DESC", conn)
 
 # ======================================
+# 共通ユーティリティ
+# ======================================
+def filter_by_year(df, selected_years):
+    """選択された年度のみ抽出"""
+    if df.empty:
+        return df
+    df["year"] = df["month"].str[:4]
+    return df[df["year"].isin(selected_years)]
+
+# ======================================
 # データ入力フォーム
 # ======================================
 def data_input_form(conn):
@@ -77,96 +86,112 @@ def data_input_form(conn):
 # ======================================
 # グラフ描画関数群
 # ======================================
-def plot_monthly_summary(df):
-    summary = df.groupby(["month", "type"])["amount"].sum().unstack(fill_value=0)
-    summary["純収支"] = summary.get("収入", 0) - summary.get("支出", 0)
-    summary = summary.sort_index()
-    summary["year"] = summary.index.str[:4]
-    summary["month_num"] = summary.index.str[5:7].astype(int)
-
-    current_year = str(date.today().year)
-    prev_year = str(date.today().year - 1)
-    this_month = date.today().month
-
-    past_data = summary[summary["year"] < current_year]
-    this_year_data = summary[summary["year"] == current_year]
-    prev_year_data = summary[summary["year"] == prev_year]
-
-    monthly_avg = past_data.groupby("month_num")["純収支"].mean()
-    predicted = monthly_avg.to_frame(name="予測純収支")
-
-    fig = go.Figure()
-
-    fig.add_trace(go.Bar(
-        x=this_year_data["month_num"],
-        y=this_year_data["純収支"],
-        name=f"{current_year} 実績",
-        marker_color="#4C72B0",
-        opacity=0.85
-    ))
-
-    if not prev_year_data.empty:
-        fig.add_trace(go.Scatter(
-            x=prev_year_data["month_num"],
-            y=prev_year_data["純収支"],
-            mode="lines+markers",
-            name=f"{prev_year} 実績",
-            line=dict(color="gray", dash="dot", width=2),
-            marker=dict(symbol="square")
-        ))
-
-    months = predicted.index
-    values = predicted["予測純収支"]
-
-    fig.add_trace(go.Scatter(
-        x=months[months <= this_month],
-        y=values[months <= this_month],
-        mode="lines+markers",
-        name="予測（〜今月）",
-        line=dict(color="red", width=3)
-    ))
-
-    fig.add_trace(go.Scatter(
-        x=months[months > this_month],
-        y=values[months > this_month],
-        mode="lines+markers",
-        name="予測（今後）",
-        line=dict(color="red", width=3, dash="dash")
-    ))
-
-    fig.update_layout(
-        title=f"{current_year} 年 月別純収支（予測＋前年比）",
-        xaxis_title="月",
-        yaxis_title="金額（円）",
-        template="plotly_dark",
-        hovermode="x unified",
-        legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center"),
-        bargap=0.2
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-
-def plot_expense_pie(df):
-    current_year = str(date.today().year)
-    expense_df = df[(df["type"] == "支出") & (df["month"].str.startswith(current_year))]
-
-    if expense_df.empty:
-        st.info(f"{current_year}年の支出データがありません。")
+def plot_monthly_summary(df, selected_years):
+    """月別純収支（前年比率付き）"""
+    if df.empty:
+        st.info("データがありません。")
         return
 
-    category_summary = expense_df.groupby("category")["amount"].sum().reset_index()
-    fig = px.pie(
-        category_summary,
-        names="category",
-        values="amount",
-        title=f"{current_year}年 費目別支出内訳",
-        color_discrete_sequence=px.colors.qualitative.Set3,
+    df["year"] = df["month"].str[:4]
+    df["month_num"] = df["month"].str[5:7].astype(int)
+    summary = df.groupby(["year", "month_num", "type"])["amount"].sum().unstack(fill_value=0)
+    summary["純収支"] = summary.get("収入", 0) - summary.get("支出", 0)
+    summary = summary.reset_index()
+
+    # グラフ初期化
+    fig = go.Figure()
+    colors = px.colors.qualitative.Set2
+
+    for i, year in enumerate(selected_years):
+        data_y = summary[summary["year"] == year]
+        fig.add_trace(go.Bar(
+            x=data_y["month_num"],
+            y=data_y["純収支"],
+            name=f"{year} 純収支",
+            marker_color=colors[i % len(colors)],
+            opacity=0.85
+        ))
+
+    # === 前年比率ライン ===
+    if len(selected_years) >= 2:
+        selected_years_sorted = sorted(selected_years)
+        current = selected_years_sorted[-1]
+        prev = selected_years_sorted[-2]
+
+        current_data = summary[summary["year"] == current].set_index("month_num")
+        prev_data = summary[summary["year"] == prev].set_index("month_num")
+
+        # 同月比率計算
+        compare = pd.DataFrame({
+            "前年比(%)": (current_data["純収支"] / prev_data["純収支"] - 1) * 100
+        }).dropna()
+
+        if not compare.empty:
+            fig.add_trace(go.Scatter(
+                x=compare.index,
+                y=compare["前年比(%)"],
+                mode="lines+markers",
+                name=f"{current} 前年比率（対 {prev}）",
+                yaxis="y2",
+                line=dict(color="red", width=3)
+            ))
+
+    fig.update_layout(
+        title=f"📈 月別純収支と前年比率（{', '.join(selected_years)} 年）",
+        xaxis_title="月",
+        yaxis_title="純収支（円）",
+        yaxis2=dict(title="前年比（％）", overlaying="y", side="right", showgrid=False),
+        template="plotly_dark",
+        hovermode="x unified",
+        legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")
     )
-    fig.update_traces(textinfo="percent+label", pull=[0.05]*len(category_summary))
     st.plotly_chart(fig, use_container_width=True)
 
 
-def plot_trend(df):
+def plot_expense_pie(df, selected_years):
+    """費目別支出内訳（複数年度横並び）"""
+    df = filter_by_year(df, selected_years)
+    expense_df = df[df["type"] == "支出"]
+
+    if expense_df.empty:
+        st.info("選択された年度の支出データがありません。")
+        return
+
+    st.markdown("### 💰 費目別支出内訳（年度比較）")
+
+    n_years = len(selected_years)
+    n_cols = 3 if n_years >= 3 else n_years
+    rows = (n_years + n_cols - 1) // n_cols
+
+    year_chunks = [selected_years[i:i+n_cols] for i in range(0, n_years, n_cols)]
+
+    for chunk in year_chunks:
+        cols = st.columns(len(chunk))
+        for col, year in zip(cols, chunk):
+            with col:
+                year_data = expense_df[expense_df["month"].str[:4] == year]
+                cat_sum = year_data.groupby("category")["amount"].sum().reset_index()
+                if cat_sum.empty:
+                    st.write(f"🟡 {year}：データなし")
+                    continue
+                fig = px.pie(
+                    cat_sum,
+                    names="category",
+                    values="amount",
+                    title=f"{year} 年",
+                    color_discrete_sequence=px.colors.qualitative.Set3
+                )
+                fig.update_traces(textinfo="percent+label", pull=[0.05]*len(cat_sum))
+                st.plotly_chart(fig, use_container_width=True)
+
+
+def plot_trend(df, selected_years):
+    """収入・支出トレンド"""
+    df = filter_by_year(df, selected_years)
+    if df.empty:
+        st.info("選択された年度のデータがありません。")
+        return
+
     trend_df = df.groupby(["month", "type"])["amount"].sum().reset_index()
     trend_df["month_num"] = trend_df["month"].str[5:7].astype(int)
 
@@ -176,20 +201,22 @@ def plot_trend(df):
         y="amount",
         color="type",
         markers=True,
+        line_dash="type",
         color_discrete_map={"収入": "#2E86DE", "支出": "#E74C3C"},
-        title="月別 収入・支出 トレンド",
+        title=f"📉 月別 収入・支出トレンド（{', '.join(selected_years)} 年）",
         template="plotly_dark"
     )
     fig.update_layout(xaxis_title="月", yaxis_title="金額（円）", hovermode="x unified")
     st.plotly_chart(fig, use_container_width=True)
 
 
-def plot_category_trend(df):
-    current_year = str(date.today().year)
-    expense_df = df[(df["type"] == "支出") & (df["month"].str.startswith(current_year))]
+def plot_category_trend(df, selected_years):
+    """費目別支出トレンド比較"""
+    df = filter_by_year(df, selected_years)
+    expense_df = df[df["type"] == "支出"]
 
     if expense_df.empty:
-        st.info(f"{current_year}年の支出データがありません。")
+        st.info("選択された年度の支出データがありません。")
         return
 
     category_trend = expense_df.groupby(["month", "category"])["amount"].sum().reset_index()
@@ -201,7 +228,7 @@ def plot_category_trend(df):
         y="amount",
         color="category",
         markers=True,
-        title=f"{current_year}年 費目別 支出トレンド",
+        title=f"📊 費目別 支出トレンド（{', '.join(selected_years)} 年）",
         template="plotly_dark"
     )
     fig.update_layout(xaxis_title="月", yaxis_title="金額（円）", hovermode="x unified")
@@ -216,31 +243,44 @@ def main():
 
     conn = init_db()
     data_input_form(conn)
-
     df = load_data(conn)
+
     st.markdown("### 📋 登録済みデータ")
     if df.empty:
         st.info("まだデータが登録されていません。")
         return
-
     st.dataframe(df, use_container_width=True, hide_index=True)
 
+    # === 年度選択（全タブ共通） ===
+    available_years = sorted(df["month"].str[:4].unique().tolist())
+    current_year = str(date.today().year)
+    selected_years = st.multiselect(
+        "📆 表示する年度を選択",
+        available_years,
+        default=[current_year] if current_year in available_years else [available_years[-1]]
+    )
+
+    if not selected_years:
+        st.warning("少なくとも1つの年度を選択してください。")
+        return
+
+    # === グラフ分析タブ ===
     st.markdown("### 📊 収支グラフ分析")
     tab1, tab2, tab3, tab4 = st.tabs([
-        "📈 月別収支（予測＋前年比）",
-        "💰 費目別支出内訳",
+        "📈 月別収支＋前年比率",
+        "💰 費目別支出内訳（比較）",
         "📉 収入・支出トレンド",
         "📊 費目別トレンド比較"
     ])
 
     with tab1:
-        plot_monthly_summary(df)
+        plot_monthly_summary(df, selected_years)
     with tab2:
-        plot_expense_pie(df)
+        plot_expense_pie(df, selected_years)
     with tab3:
-        plot_trend(df)
+        plot_trend(df, selected_years)
     with tab4:
-        plot_category_trend(df)
+        plot_category_trend(df, selected_years)
         csv = df.to_csv(index=False).encode("utf-8-sig")
         st.download_button("📤 CSVとして保存", csv, "cattle_finance_data.csv", "text/csv")
 
