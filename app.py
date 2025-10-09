@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
+import matplotlib.pyplot as plt
 from datetime import date
 
 # ===============================
@@ -96,8 +97,6 @@ else:
     predicted = monthly_avg.to_frame(name="予測純収支")
     
     # matplotlibで描画
-    import matplotlib.pyplot as plt
-    
     fig, ax = plt.subplots(figsize=(6, 3))
     ax.bar(this_year_data["month_num"], this_year_data["純収支"], label=f"{current_year} 実績", alpha=0.7)
     ax.plot(predicted.index, predicted["予測純収支"], color="red", marker="o", label="予測（過去平均）")
