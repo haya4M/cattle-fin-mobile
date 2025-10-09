@@ -71,12 +71,45 @@ if df.empty:
 else:
     st.dataframe(df, use_container_width=True, hide_index=True)
 
-    # 月別集計
-    st.markdown("### 📈 月別収支")
+    # ===============================
+    # 月別集計と予測グラフ
+    # ===============================
+    st.markdown("### 📈 月別収支（予測付き）")
+    
+    # 月ごとの収支集計
     summary = df.groupby(["month", "type"])["amount"].sum().unstack(fill_value=0)
     summary["純収支"] = summary.get("収入", 0) - summary.get("支出", 0)
-    st.bar_chart(summary["純収支"])
-
+    summary = summary.sort_index()
+    
+    # 年ごとのデータを分離
+    summary["year"] = summary.index.str[:4]
+    summary["month_num"] = summary.index.str[5:7].astype(int)
+    
+    current_year = str(date.today().year)
+    past_data = summary[summary["year"] < current_year]
+    this_year_data = summary[summary["year"] == current_year]
+    
+    # 昨年度以前の平均（各月）
+    monthly_avg = past_data.groupby("month_num")["純収支"].mean()
+    
+    # 本年度の予測を生成
+    predicted = monthly_avg.to_frame(name="予測純収支")
+    
+    # matplotlibで描画
+    import matplotlib.pyplot as plt
+    
+    fig, ax = plt.subplots(figsize=(6, 3))
+    ax.bar(this_year_data["month_num"], this_year_data["純収支"], label=f"{current_year} 実績", alpha=0.7)
+    ax.plot(predicted.index, predicted["予測純収支"], color="red", marker="o", label="予測（過去平均）")
+    
+    ax.set_title(f"{current_year} 年 月別純収支（予測付き）")
+    ax.set_xlabel("月")
+    ax.set_ylabel("金額（円）")
+    ax.legend()
+    ax.grid(True, linestyle="--", alpha=0.5)
+    
+    st.pyplot(fig)
+    
     # CSV出力
     csv = df.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
