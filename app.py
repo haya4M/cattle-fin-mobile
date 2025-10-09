@@ -102,6 +102,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # 📈 タブ1：月別収支（予測＋前年比）
 # ----------------------------------------------------------------------
 with tab1:
+    # 月別集計
     summary = df.groupby(["month", "type"])["amount"].sum().unstack(fill_value=0)
     summary["純収支"] = summary.get("収入", 0) - summary.get("支出", 0)
     summary = summary.sort_index()
@@ -117,38 +118,81 @@ with tab1:
     this_year_data = summary[summary["year"] == current_year]
     prev_year_data = summary[summary["year"] == prev_year]
 
+    # 平均値から予測算出
     monthly_avg = past_data.groupby("month_num")["純収支"].mean()
     predicted = monthly_avg.to_frame(name="予測純収支")
 
-    fig, ax = plt.subplots(figsize=(7, 4))
+    # -------------------------------
+    # Plotlyグラフ構築
+    # -------------------------------
+    fig = go.Figure()
 
-    # 棒：今年の実績
-    ax.bar(this_year_data["month_num"], this_year_data["純収支"],
-           color="#4C72B0", alpha=0.8, label=f"{current_year} 実績")
+    # 棒グラフ：今年の実績
+    fig.add_trace(go.Bar(
+        x=this_year_data["month_num"],
+        y=this_year_data["純収支"],
+        name=f"{current_year} 実績",
+        marker_color="#4C72B0",
+        opacity=0.85
+    ))
 
     # 折れ線：前年実績
     if not prev_year_data.empty:
-        ax.plot(prev_year_data["month_num"], prev_year_data["純収支"],
-                color="gray", linestyle="-.", linewidth=2, marker="s", label=f"{prev_year} 実績")
+        fig.add_trace(go.Scatter(
+            x=prev_year_data["month_num"],
+            y=prev_year_data["純収支"],
+            mode="lines+markers",
+            name=f"{prev_year} 実績",
+            line=dict(color="gray", dash="dot", width=2),
+            marker=dict(symbol="square")
+        ))
 
-    # 折れ線：予測（実線＋点線）
+    # 折れ線：予測（今月まで実線、以降点線）
     months = predicted.index
     values = predicted["予測純収支"]
-    ax.plot(months[months <= this_month], values[months <= this_month],
-            color="red", marker="o", linestyle="-", linewidth=2, label="予測（〜今月）")
-    ax.plot(months[months > this_month], values[months > this_month],
-            color="red", marker="o", linestyle="--", linewidth=2, label="予測（今後）")
 
-    ax.set_title(f"{current_year} 年 月別純収支（予測＋前年比）", fontsize=14, fontweight="bold")
-    ax.set_xlabel("月")
-    ax.set_ylabel("金額（円）")
-    ax.set_xticks(range(1, 13))
-    ax.grid(True, linestyle="--", alpha=0.5)
-    ax.legend()
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
+    # 実線部分
+    fig.add_trace(go.Scatter(
+        x=months[months <= this_month],
+        y=values[months <= this_month],
+        mode="lines+markers",
+        name="予測（〜今月）",
+        line=dict(color="red", width=3),
+        marker=dict(size=8, symbol="circle")
+    ))
 
-    st.pyplot(fig)
+    # 点線部分
+    fig.add_trace(go.Scatter(
+        x=months[months > this_month],
+        y=values[months > this_month],
+        mode="lines+markers",
+        name="予測（今後）",
+        line=dict(color="red", width=3, dash="dash"),
+        marker=dict(size=8, symbol="circle-open")
+    ))
+
+    # -------------------------------
+    # グラフ全体のレイアウト設定
+    # -------------------------------
+    fig.update_layout(
+        title=f"{current_year} 年 月別純収支（予測＋前年比）",
+        xaxis=dict(title="月", tickmode="linear", dtick=1),
+        yaxis_title="金額（円）",
+        template="plotly_dark",  # 🎨 スタイリッシュな背景
+        hovermode="x unified",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=-0.3,
+            xanchor="center",
+            x=0.5,
+            title=None
+        ),
+        bargap=0.2,
+        margin=dict(t=80, b=80, l=60, r=40)
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
 
 
 # ----------------------------------------------------------------------
