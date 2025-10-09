@@ -66,24 +66,6 @@ def filter_by_year(df, selected_years):
     return df[df["year"].isin(selected_years)]
 
 # ======================================
-# データ入力フォーム
-# ======================================
-def data_input_form(conn):
-    with st.expander("📥 新規データ入力", expanded=True):
-        date_val = st.date_input("日付", value=date.today())
-        category = st.selectbox(
-            "費目",
-            ["飼料費", "光熱水費", "獣医費", "子牛購入費", "牛売上", "補助金", "地価費", "人件費", "その他"]
-        )
-        type_ = st.radio("区分", ["支出", "収入"], horizontal=True)
-        amount = st.number_input("金額（円）", min_value=0, step=1000)
-        note = st.text_input("備考", placeholder="例：配合飼料、子牛販売 など")
-
-        if st.button("💾 登録する"):
-            insert_data(conn, date_val, category, type_, amount, note)
-            st.success("登録しました ✅")
-
-# ======================================
 # グラフ描画関数群
 # ======================================
 def plot_monthly_summary(df, selected_years):
@@ -98,7 +80,6 @@ def plot_monthly_summary(df, selected_years):
     summary["純収支"] = summary.get("収入", 0) - summary.get("支出", 0)
     summary = summary.reset_index()
 
-    # グラフ初期化
     fig = go.Figure()
     colors = px.colors.qualitative.Set2
 
@@ -121,7 +102,6 @@ def plot_monthly_summary(df, selected_years):
         current_data = summary[summary["year"] == current].set_index("month_num")
         prev_data = summary[summary["year"] == prev].set_index("month_num")
 
-        # 同月比率計算
         compare = pd.DataFrame({
             "前年比(%)": (current_data["純収支"] / prev_data["純収支"] - 1) * 100
         }).dropna()
@@ -161,8 +141,6 @@ def plot_expense_pie(df, selected_years):
 
     n_years = len(selected_years)
     n_cols = 3 if n_years >= 3 else n_years
-    rows = (n_years + n_cols - 1) // n_cols
-
     year_chunks = [selected_years[i:i+n_cols] for i in range(0, n_years, n_cols)]
 
     for chunk in year_chunks:
@@ -235,6 +213,24 @@ def plot_category_trend(df, selected_years):
     st.plotly_chart(fig, use_container_width=True)
 
 # ======================================
+# データ入力フォーム
+# ======================================
+def data_input_form(conn):
+    with st.expander("📥 新規データ入力", expanded=False):
+        date_val = st.date_input("日付", value=date.today())
+        category = st.selectbox(
+            "費目",
+            ["飼料費", "光熱水費", "獣医費", "子牛購入費", "牛売上", "補助金", "地価費", "人件費", "その他"]
+        )
+        type_ = st.radio("区分", ["支出", "収入"], horizontal=True)
+        amount = st.number_input("金額（円）", min_value=0, step=1000)
+        note = st.text_input("備考", placeholder="例：配合飼料、子牛販売 など")
+
+        if st.button("💾 登録する"):
+            insert_data(conn, date_val, category, type_, amount, note)
+            st.success("登録しました ✅")
+
+# ======================================
 # メインアプリ
 # ======================================
 def main():
@@ -242,47 +238,54 @@ def main():
     st.caption("Streamlit Cloudでどこからでも入力OK📱")
 
     conn = init_db()
-    data_input_form(conn)
     df = load_data(conn)
 
+    # === 年度選択 ===
+    if not df.empty:
+        available_years = sorted(df["month"].str[:4].unique().tolist())
+        current_year = str(date.today().year)
+        selected_years = st.multiselect(
+            "📆 表示する年度を選択",
+            available_years,
+            default=[current_year] if current_year in available_years else [available_years[-1]]
+        )
+        if not selected_years:
+            st.warning("少なくとも1つの年度を選択してください。")
+            return
+    else:
+        st.info("まだデータが登録されていません。下のフォームから追加してください。")
+        selected_years = []
+
+    # === 先にグラフを表示 ===
+    if not df.empty:
+        st.markdown("### 📊 収支グラフ分析")
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "📈 月別収支＋前年比率",
+            "💰 費目別支出内訳（比較）",
+            "📉 収入・支出トレンド",
+            "📊 費目別トレンド比較"
+        ])
+
+        with tab1:
+            plot_monthly_summary(df, selected_years)
+        with tab2:
+            plot_expense_pie(df, selected_years)
+        with tab3:
+            plot_trend(df, selected_years)
+        with tab4:
+            plot_category_trend(df, selected_years)
+            csv = df.to_csv(index=False).encode("utf-8-sig")
+            st.download_button("📤 CSVとして保存", csv, "cattle_finance_data.csv", "text/csv")
+
+    # === 次にデータ入力フォーム ===
+    data_input_form(conn)
+
+    # === 最後に登録データ表示 ===
     st.markdown("### 📋 登録済みデータ")
     if df.empty:
         st.info("まだデータが登録されていません。")
-        return
-    st.dataframe(df, use_container_width=True, hide_index=True)
-
-    # === 年度選択（全タブ共通） ===
-    available_years = sorted(df["month"].str[:4].unique().tolist())
-    current_year = str(date.today().year)
-    selected_years = st.multiselect(
-        "📆 表示する年度を選択",
-        available_years,
-        default=[current_year] if current_year in available_years else [available_years[-1]]
-    )
-
-    if not selected_years:
-        st.warning("少なくとも1つの年度を選択してください。")
-        return
-
-    # === グラフ分析タブ ===
-    st.markdown("### 📊 収支グラフ分析")
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "📈 月別収支＋前年比率",
-        "💰 費目別支出内訳（比較）",
-        "📉 収入・支出トレンド",
-        "📊 費目別トレンド比較"
-    ])
-
-    with tab1:
-        plot_monthly_summary(df, selected_years)
-    with tab2:
-        plot_expense_pie(df, selected_years)
-    with tab3:
-        plot_trend(df, selected_years)
-    with tab4:
-        plot_category_trend(df, selected_years)
-        csv = df.to_csv(index=False).encode("utf-8-sig")
-        st.download_button("📤 CSVとして保存", csv, "cattle_finance_data.csv", "text/csv")
+    else:
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
     st.caption("© 2025 食肉牛DXプロジェクト - スマホ対応版")
 
